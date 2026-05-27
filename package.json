@@ -1,0 +1,15 @@
+{
+  "name": "micro",
+  "private": true,
+  "packageManager": "pnpm@10.30.3",
+  "engines": { "node": ">=22" },
+  "pnpm": { "onlyBuiltDependencies": ["esbuild"] },
+  "scripts": {
+    "dev": "pnpm --filter @micro/web dev",
+    "prebuild": "npx -y @proappstore/cli@latest check",
+    "build": "pnpm --filter @micro/web build",
+    "preview": "pnpm --filter @micro/web preview",
+    "typecheck": "pnpm --filter @micro/web exec tsc -b",
+    "test": "pnpm --filter @micro/web exec tsc -b"
+  }
+}
