@@ -7,7 +7,10 @@ import { useBoardPersistence } from './hooks/useBoardPersistence.ts'
 import type { Shape, Camera } from './types/canvas.ts'
 import type { BoardData } from './types/board.ts'
 
-const app = initPro({ appId: 'micro' })
+const app = initPro({
+  appId: 'micro',
+  dataApiBase: 'https://pas-data-micro.serge-the-dev.workers.dev',
+})
 
 interface OpenBoard {
   id: string
