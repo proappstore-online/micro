@@ -18,6 +18,7 @@ const tools: { type: ToolType; label: string; icon: string }[] = [
   { type: 'rect', label: 'Rectangle', icon: '▢' },
   { type: 'ellipse', label: 'Ellipse', icon: '◯' },
   { type: 'line', label: 'Line', icon: '╱' },
+  { type: 'arrow', label: 'Arrow', icon: '→' },
   { type: 'freehand', label: 'Draw', icon: '✎' },
   { type: 'text', label: 'Text', icon: 'T' },
   { type: 'sticky', label: 'Sticky', icon: '▧' },

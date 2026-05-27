@@ -15,7 +15,7 @@ export interface Bounds {
   height: number
 }
 
-export type ShapeType = 'rect' | 'ellipse' | 'text' | 'sticky' | 'line' | 'freehand'
+export type ShapeType = 'rect' | 'ellipse' | 'text' | 'sticky' | 'line' | 'arrow' | 'freehand'
 
 export type ToolType = 'select' | 'pan' | ShapeType
 
@@ -62,12 +62,17 @@ export interface LineShape extends BaseShape {
   points: Point[]
 }
 
+export interface ArrowShape extends BaseShape {
+  type: 'arrow'
+  points: Point[]
+}
+
 export interface FreehandShape extends BaseShape {
   type: 'freehand'
   points: Point[]
 }
 
-export type Shape = RectShape | EllipseShape | TextShape | StickyShape | LineShape | FreehandShape
+export type Shape = RectShape | EllipseShape | TextShape | StickyShape | LineShape | ArrowShape | FreehandShape
 
 export interface Camera {
   x: number
@@ -104,6 +109,65 @@ export const SHAPE_COLORS = [
   '#ffffff',
 ]
 
+export interface SnapGuide {
+  axis: 'x' | 'y'
+  pos: number
+  from: number
+  to: number
+}
+
+export interface SnapResult {
+  adjX: number
+  adjY: number
+  guides: SnapGuide[]
+}
+
+export function computeSnap(moving: Bounds, others: Bounds[], threshold: number): SnapResult {
+  const myXs = [moving.x, moving.x + moving.width / 2, moving.x + moving.width]
+  const myYs = [moving.y, moving.y + moving.height / 2, moving.y + moving.height]
+
+  let bestX: { dist: number; adj: number; target: number; other: Bounds } | null = null
+  let bestY: { dist: number; adj: number; target: number; other: Bounds } | null = null
+
+  for (const o of others) {
+    const oXs = [o.x, o.x + o.width / 2, o.x + o.width]
+    const oYs = [o.y, o.y + o.height / 2, o.y + o.height]
+    for (const my of myXs) for (const t of oXs) {
+      const d = Math.abs(my - t)
+      if (d <= threshold && (!bestX || d < bestX.dist)) bestX = { dist: d, adj: t - my, target: t, other: o }
+    }
+    for (const my of myYs) for (const t of oYs) {
+      const d = Math.abs(my - t)
+      if (d <= threshold && (!bestY || d < bestY.dist)) bestY = { dist: d, adj: t - my, target: t, other: o }
+    }
+  }
+
+  const adjX = bestX?.adj ?? 0
+  const adjY = bestY?.adj ?? 0
+  const guides: SnapGuide[] = []
+  if (bestX) {
+    const movedTop = moving.y + adjY
+    const movedBot = movedTop + moving.height
+    guides.push({
+      axis: 'x',
+      pos: bestX.target,
+      from: Math.min(movedTop, bestX.other.y),
+      to: Math.max(movedBot, bestX.other.y + bestX.other.height),
+    })
+  }
+  if (bestY) {
+    const movedLeft = moving.x + adjX
+    const movedRight = movedLeft + moving.width
+    guides.push({
+      axis: 'y',
+      pos: bestY.target,
+      from: Math.min(movedLeft, bestY.other.x),
+      to: Math.max(movedRight, bestY.other.x + bestY.other.width),
+    })
+  }
+  return { adjX, adjY, guides }
+}
+
 export function createShape(type: ShapeType, x: number, y: number): Shape {
   const base: BaseShape = {
     id: crypto.randomUUID(),
@@ -131,6 +195,8 @@ export function createShape(type: ShapeType, x: number, y: number): Shape {
       return { ...base, type: 'sticky', text: '', fontSize: 14, fill: '#fef08a', stroke: 'none', width: 200, height: 200 }
     case 'line':
       return { ...base, type: 'line', points: [], fill: 'none' }
+    case 'arrow':
+      return { ...base, type: 'arrow', points: [], fill: 'none' }
     case 'freehand':
       return { ...base, type: 'freehand', points: [], fill: 'none' }
   }

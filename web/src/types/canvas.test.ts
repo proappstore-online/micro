@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { createShape, STICKY_COLORS, SHAPE_COLORS } from './canvas.ts'
-import type { RectShape, EllipseShape, TextShape, StickyShape, LineShape, FreehandShape } from './canvas.ts'
+import { createShape, computeSnap, STICKY_COLORS, SHAPE_COLORS } from './canvas.ts'
+import type { RectShape, EllipseShape, TextShape, StickyShape, LineShape, ArrowShape, FreehandShape } from './canvas.ts'
 
 describe('createShape', () => {
   it('creates a rect with cornerRadius', () => {
@@ -46,6 +46,13 @@ describe('createShape', () => {
     expect(s.fill).toBe('none')
   })
 
+  it('creates an arrow with empty points', () => {
+    const s = createShape('arrow', 0, 0) as ArrowShape
+    expect(s.type).toBe('arrow')
+    expect(s.points).toEqual([])
+    expect(s.fill).toBe('none')
+  })
+
   it('creates freehand with empty points', () => {
     const s = createShape('freehand', 0, 0) as FreehandShape
     expect(s.type).toBe('freehand')
@@ -68,5 +75,59 @@ describe('createShape', () => {
     expect(STICKY_COLORS).toHaveLength(6)
     expect(SHAPE_COLORS).toHaveLength(9)
     expect(SHAPE_COLORS[0]).toBe('#111111')
+  })
+})
+
+describe('computeSnap', () => {
+  it('returns no adjustment when nothing is close', () => {
+    const moving = { x: 0, y: 0, width: 50, height: 50 }
+    const others = [{ x: 200, y: 200, width: 50, height: 50 }]
+    const res = computeSnap(moving, others, 6)
+    expect(res.adjX).toBe(0)
+    expect(res.adjY).toBe(0)
+    expect(res.guides).toHaveLength(0)
+  })
+
+  it('snaps left edge to neighbor left edge within threshold', () => {
+    const moving = { x: 103, y: 0, width: 50, height: 50 }
+    const others = [{ x: 100, y: 200, width: 50, height: 50 }]
+    const res = computeSnap(moving, others, 6)
+    expect(res.adjX).toBe(-3)
+    expect(res.adjY).toBe(0)
+    expect(res.guides).toHaveLength(1)
+    expect(res.guides[0]).toMatchObject({ axis: 'x', pos: 100 })
+  })
+
+  it('snaps both axes when both are close', () => {
+    const moving = { x: 102, y: 198, width: 40, height: 40 }
+    const others = [{ x: 100, y: 200, width: 40, height: 40 }]
+    const res = computeSnap(moving, others, 6)
+    expect(res.adjX).toBe(-2)
+    expect(res.adjY).toBe(2)
+    expect(res.guides).toHaveLength(2)
+  })
+
+  it('snaps centers to centers', () => {
+    const moving = { x: 0, y: 0, width: 40, height: 40 }    // center 20,20
+    const others = [{ x: 1, y: 100, width: 40, height: 40 }] // center 21,120
+    const res = computeSnap(moving, others, 6)
+    expect(res.adjX).toBe(1) // shift right by 1 so centers align
+  })
+
+  it('picks the nearest snap target', () => {
+    const moving = { x: 99, y: 0, width: 50, height: 50 } // left at 99, right at 149
+    const others = [
+      { x: 50, y: 0, width: 50, height: 50 },  // right edge at 100 — distance 1 from moving's left
+      { x: 200, y: 0, width: 50, height: 50 }, // left edge at 200 — distance 51 from moving's right (out)
+    ]
+    const res = computeSnap(moving, others, 6)
+    expect(res.adjX).toBe(1)
+  })
+
+  it('respects threshold', () => {
+    const moving = { x: 110, y: 0, width: 50, height: 50 }
+    const others = [{ x: 100, y: 0, width: 50, height: 50 }]
+    const res = computeSnap(moving, others, 6) // diff is 10 — outside threshold
+    expect(res.adjX).toBe(0)
   })
 })

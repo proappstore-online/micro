@@ -1,6 +1,6 @@
 import { useRef, useCallback, useState, useEffect } from 'react'
-import type { Shape, Point, ToolType } from '../types/canvas.ts'
-import { createShape } from '../types/canvas.ts'
+import type { Shape, Point, ToolType, SnapGuide } from '../types/canvas.ts'
+import { createShape, computeSnap } from '../types/canvas.ts'
 import { useCamera } from '../hooks/useCamera.ts'
 import { useBoard } from '../hooks/useBoard.ts'
 import { ShapeRenderer } from './ShapeRenderer.tsx'
@@ -29,14 +29,39 @@ interface CanvasProps {
   onBack: () => void
 }
 
+function simplifyPoints(points: Point[], tolerance: number): Point[] {
+  if (points.length <= 2) return points
+  let maxDist = 0
+  let maxIdx = 0
+  const first = points[0]
+  const last = points[points.length - 1]
+  for (let i = 1; i < points.length - 1; i++) {
+    const d = Math.abs(
+      (last.y - first.y) * points[i].x - (last.x - first.x) * points[i].y + last.x * first.y - last.y * first.x
+    ) / Math.hypot(last.y - first.y, last.x - first.x)
+    if (d > maxDist) { maxDist = d; maxIdx = i }
+  }
+  if (maxDist > tolerance) {
+    const left = simplifyPoints(points.slice(0, maxIdx + 1), tolerance)
+    const right = simplifyPoints(points.slice(maxIdx), tolerance)
+    return [...left.slice(0, -1), ...right]
+  }
+  return [first, last]
+}
+
 export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCamera, onSave, onRename, onBack }: CanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [svgSize, setSvgSize] = useState({ w: 0, h: 0 })
   const { camera, screenToCanvas, pan, zoomBy, resetView, setCamera } = useCamera(svgRef)
   const board = useBoard(initialShapes)
   const [drag, setDrag] = useState<DragState>(NONE_DRAG)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [selectBox, setSelectBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [editingName, setEditingName] = useState(false)
+  const [spaceHeld, setSpaceHeld] = useState(false)
+  const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([])
+  const clipboard = useRef<Shape[]>([])
   const dragRef = useRef(drag)
   dragRef.current = drag
 
@@ -49,12 +74,41 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
   const screenToCanvasRef = useRef(screenToCanvas)
   screenToCanvasRef.current = screenToCanvas
 
+  const onSaveRef = useRef(onSave)
+  onSaveRef.current = onSave
+
   useEffect(() => {
     setCamera(initialCamera)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onSaveRef = useRef(onSave)
-  onSaveRef.current = onSave
+  useEffect(() => {
+    const el = svgRef.current
+    if (!el) return
+    const obs = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect
+      setSvgSize({ w: width, h: height })
+    })
+    obs.observe(el)
+    setSvgSize({ w: el.clientWidth, h: el.clientHeight })
+    return () => obs.disconnect()
+  }, [])
+
+  // Native wheel listener for passive: false (React onWheel can't preventDefault)
+  useEffect(() => {
+    const el = svgRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      if (e.ctrlKey || e.metaKey) {
+        const factor = e.deltaY > 0 ? 0.9 : 1.1
+        zoomBy(factor, e.clientX, e.clientY)
+      } else {
+        pan(-e.deltaX, -e.deltaY)
+      }
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [pan, zoomBy])
 
   useEffect(() => {
     if (!board.dirty) return
@@ -65,22 +119,15 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
     return () => clearTimeout(timer)
   }, [board.shapes, board.dirty, board.clearDirty])
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault()
-    if (e.ctrlKey || e.metaKey) {
-      const factor = e.deltaY > 0 ? 0.9 : 1.1
-      zoomBy(factor, e.clientX, e.clientY)
-    } else {
-      pan(-e.deltaX, -e.deltaY)
-    }
-  }, [pan, zoomBy])
+  const effectiveTool = spaceHeld ? 'pan' as ToolType : board.activeTool
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     const b = boardRef.current
+    const tool = spaceHeld ? 'pan' as ToolType : b.activeTool
     const canvasPoint = screenToCanvasRef.current(e.clientX, e.clientY)
     const screenPoint = { x: e.clientX, y: e.clientY }
 
-    if (b.activeTool === 'pan' || e.button === 1) {
+    if (tool === 'pan' || e.button === 1) {
       setDrag({ type: 'pan', startCanvas: canvasPoint, startScreen: screenPoint })
       ;(e.target as Element).setPointerCapture(e.pointerId)
       return
@@ -88,7 +135,7 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
 
     if (e.button !== 0) return
 
-    if (b.activeTool === 'select') {
+    if (tool === 'select') {
       b.clearSelection()
       setSelectBox(null)
       setDrag({ type: 'select-box', startCanvas: canvasPoint, startScreen: screenPoint })
@@ -96,8 +143,8 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
       return
     }
 
-    const shape = createShape(b.activeTool, canvasPoint.x, canvasPoint.y)
-    if (b.activeTool === 'freehand' || b.activeTool === 'line') {
+    const shape = createShape(tool, canvasPoint.x, canvasPoint.y)
+    if (tool === 'freehand' || tool === 'line' || tool === 'arrow') {
       ;(shape as any).points = [{ x: canvasPoint.x, y: canvasPoint.y }]
       ;(shape as any).stroke = b.activeColor
     } else {
@@ -109,7 +156,7 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
     b.setSelectedIds([shape.id])
     setDrag({ type: 'draw', startCanvas: canvasPoint, startScreen: screenPoint, shapeId: shape.id })
     ;(e.target as Element).setPointerCapture(e.pointerId)
-  }, [])
+  }, [spaceHeld])
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const d = dragRef.current
@@ -130,7 +177,7 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
       const h = Math.abs(canvasPoint.y - d.startCanvas.y)
       setSelectBox({ x, y, w, h })
       const ids = b.shapes.filter(s => {
-        if (s.type === 'line' || s.type === 'freehand') return false
+        if (s.type === 'line' || s.type === 'arrow' || s.type === 'freehand') return false
         return s.x < x + w && s.x + s.width > x && s.y < y + h && s.y + s.height > y
       }).map(s => s.id)
       b.setSelectedIds(ids)
@@ -144,8 +191,11 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
       if (shape.type === 'freehand' || shape.type === 'line') {
         const pts = [...(shape as any).points, canvasPoint]
         b.updateShape(d.shapeId, { points: pts } as any)
+      } else if (shape.type === 'arrow') {
+        const start = (shape as any).points[0] ?? d.startCanvas
+        b.updateShape(d.shapeId, { points: [start, canvasPoint] } as any)
       } else if (shape.type === 'sticky' || shape.type === 'text') {
-        // stickies/text keep their default size
+        // keep default size
       } else {
         const x = Math.min(d.startCanvas.x, canvasPoint.x)
         const y = Math.min(d.startCanvas.y, canvasPoint.y)
@@ -157,8 +207,30 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
     }
 
     if (d.type === 'move' && d.origShapes) {
-      const dx = canvasPoint.x - d.startCanvas.x
-      const dy = canvasPoint.y - d.startCanvas.y
+      let dx = canvasPoint.x - d.startCanvas.x
+      let dy = canvasPoint.y - d.startCanvas.y
+
+      if (d.origShapes.size === 1) {
+        const [[movingId, orig]] = [...d.origShapes]
+        const movingShape = b.shapes.find(s => s.id === movingId)
+        const isSnappable = movingShape && movingShape.type !== 'line' && movingShape.type !== 'arrow' && movingShape.type !== 'freehand'
+        if (isSnappable) {
+          const moving = { x: orig.x + dx, y: orig.y + dy, width: orig.width, height: orig.height }
+          const others = b.shapes
+            .filter(s => s.id !== movingId && s.type !== 'line' && s.type !== 'arrow' && s.type !== 'freehand')
+            .map(s => ({ x: s.x, y: s.y, width: s.width, height: s.height }))
+          const threshold = 6 / camera.zoom
+          const snap = computeSnap(moving, others, threshold)
+          dx += snap.adjX
+          dy += snap.adjY
+          setSnapGuides(snap.guides)
+        } else {
+          setSnapGuides([])
+        }
+      } else {
+        setSnapGuides([])
+      }
+
       for (const [id, orig] of d.origShapes) {
         b.updateShape(id, { x: orig.x + dx, y: orig.y + dy })
       }
@@ -183,7 +255,7 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
 
       b.updateShape(d.shapeId, { x, y, width, height })
     }
-  }, [pan])
+  }, [pan, camera.zoom])
 
   const handlePointerUp = useCallback((_e: React.PointerEvent) => {
     const d = dragRef.current
@@ -193,9 +265,14 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
       if (shape && (shape.type === 'text' || shape.type === 'sticky')) {
         setEditingId(shape.id)
       }
+      if (shape && shape.type === 'freehand' && (shape as any).points.length > 3) {
+        const simplified = simplifyPoints((shape as any).points, 1.5)
+        b.updateShape(d.shapeId, { points: simplified } as any)
+      }
     }
     if (d.type === 'move' || d.type === 'resize') {
       boardRef.current.commitUpdate()
+      setSnapGuides([])
     }
     if (d.type === 'select-box') {
       setSelectBox(null)
@@ -205,7 +282,7 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
 
   const handleShapePointerDown = useCallback((e: React.PointerEvent, id: string) => {
     const b = boardRef.current
-    if (b.activeTool !== 'select') return
+    if (spaceHeld || b.activeTool !== 'select') return
 
     const canvasPoint = screenToCanvasRef.current(e.clientX, e.clientY)
     const selected = e.shiftKey ? [...new Set([...b.selectedIds, id])] : [id]
@@ -226,7 +303,7 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
       origShapes,
     })
     ;(e.target as Element).setPointerCapture(e.pointerId)
-  }, [])
+  }, [spaceHeld])
 
   const handleResizeStart = useCallback((e: React.PointerEvent, shape: Shape, handle: string) => {
     boardRef.current.commitUpdate()
@@ -256,15 +333,46 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
     setEditingId(null)
   }, [])
 
-  // Keyboard shortcuts
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const isEditing = () => editingId !== null || editingName || document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA'
+
+    const onKeyDown = (e: KeyboardEvent) => {
       const b = boardRef.current
-      if (editingId || editingName) return
+
+      if (e.key === ' ' && !isEditing()) {
+        e.preventDefault()
+        setSpaceHeld(true)
+        return
+      }
+
+      if (isEditing()) return
 
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
         e.preventDefault()
         if (e.shiftKey) { b.redo() } else { b.undo() }
+        return
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
+        if (b.selectedIds.length > 0) {
+          clipboard.current = b.shapes.filter(s => b.selectedIds.includes(s.id))
+        }
+        return
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
+        if (clipboard.current.length > 0) {
+          e.preventDefault()
+          const dupes = clipboard.current.map(s => ({
+            ...s,
+            id: crypto.randomUUID(),
+            x: s.x + 30,
+            y: s.y + 30,
+            zIndex: Date.now(),
+          })) as Shape[]
+          dupes.forEach(s => b.addShape(s))
+          b.setSelectedIds(dupes.map(s => s.id))
+        }
         return
       }
 
@@ -286,6 +394,7 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
           break
         case 'a':
           if (e.metaKey || e.ctrlKey) { e.preventDefault(); b.selectAll() }
+          else b.setActiveTool('arrow')
           break
         case 'd':
           if (e.metaKey || e.ctrlKey) { e.preventDefault(); b.duplicateSelected() }
@@ -302,8 +411,17 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
           break
       }
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === ' ') setSpaceHeld(false)
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
   }, [editingId, editingName])
 
   const sortedShapes = [...board.shapes].sort((a, b) => a.zIndex - b.zIndex)
@@ -315,14 +433,14 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
     rect: 'crosshair',
     ellipse: 'crosshair',
     line: 'crosshair',
+    arrow: 'crosshair',
     freehand: 'crosshair',
     text: 'text',
     sticky: 'crosshair',
   }
 
   return (
-    <div className="fixed inset-0" style={{ background: 'var(--paper-deep)' }}>
-      {/* Top-left: back + board name */}
+    <div ref={containerRef} className="fixed inset-0" style={{ background: 'var(--paper-deep)' }}>
       <div className="fixed left-4 top-4 z-50 flex items-center gap-2">
         <button
           onClick={onBack}
@@ -355,8 +473,7 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
       <svg
         ref={svgRef}
         className="h-full w-full"
-        style={{ cursor: cursorMap[board.activeTool] }}
-        onWheel={handleWheel}
+        style={{ cursor: spaceHeld ? (drag.type === 'pan' ? 'grabbing' : 'grab') : cursorMap[board.activeTool] }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -370,7 +487,7 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
         </defs>
         <rect width="100%" height="100%" fill="url(#grid-small)" />
 
-        <g transform={`translate(${svgRef.current ? svgRef.current.clientWidth / 2 : 0}, ${svgRef.current ? svgRef.current.clientHeight / 2 : 0}) scale(${camera.zoom}) translate(${-camera.x}, ${-camera.y})`}>
+        <g transform={`translate(${svgSize.w / 2}, ${svgSize.h / 2}) scale(${camera.zoom}) translate(${-camera.x}, ${-camera.y})`}>
           {sortedShapes.map(shape => (
             <ShapeRenderer
               key={shape.id}
@@ -399,11 +516,19 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
               strokeDasharray="4 2"
             />
           )}
+
+          {snapGuides.map((g, i) =>
+            g.axis === 'x' ? (
+              <line key={i} x1={g.pos} x2={g.pos} y1={g.from} y2={g.to} stroke="var(--sky)" strokeWidth={1 / camera.zoom} pointerEvents="none" />
+            ) : (
+              <line key={i} x1={g.from} x2={g.to} y1={g.pos} y2={g.pos} stroke="var(--sky)" strokeWidth={1 / camera.zoom} pointerEvents="none" />
+            )
+          )}
         </g>
       </svg>
 
       <Toolbar
-        activeTool={board.activeTool}
+        activeTool={effectiveTool}
         activeColor={board.activeColor}
         onToolChange={board.setActiveTool}
         onColorChange={board.setActiveColor}
@@ -424,7 +549,7 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
       )}
 
       <div className="fixed bottom-4 left-4 text-[0.6rem] text-[var(--muted)] opacity-60" style={{ zIndex: 50 }}>
-        V select &middot; H pan &middot; R rect &middot; O ellipse &middot; L line &middot; P draw &middot; T text &middot; S sticky &middot; Cmd+Z undo &middot; Cmd+Shift+Z redo
+        V select &middot; H pan &middot; R rect &middot; O ellipse &middot; L line &middot; A arrow &middot; P draw &middot; T text &middot; S sticky &middot; Space hold-pan &middot; Cmd+C/V copy/paste &middot; Cmd+Z undo
       </div>
     </div>
   )

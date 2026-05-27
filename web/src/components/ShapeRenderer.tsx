@@ -185,6 +185,45 @@ export function ShapeRenderer({ shape, selected, onPointerDown, onDoubleClick }:
       )
     }
 
+    case 'arrow': {
+      if (shape.points.length < 2) return null
+      const markerId = `arrowhead-${shape.id}`
+      const d = `M ${shape.points.map(p => `${p.x} ${p.y}`).join(' L ')}`
+      return (
+        <g
+          style={{ opacity: shape.opacity, cursor: 'move' }}
+          onPointerDown={handlePointerDown}
+        >
+          <defs>
+            <marker
+              id={markerId}
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={shape.stroke} />
+            </marker>
+          </defs>
+          <path d={d} fill="none" stroke="transparent" strokeWidth={12} />
+          <path
+            d={d}
+            fill="none"
+            stroke={shape.stroke}
+            strokeWidth={shape.strokeWidth}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            markerEnd={`url(#${markerId})`}
+          />
+          {selected && (
+            <path d={d} fill="none" stroke={selectionStroke} strokeWidth={selectionWidth} strokeDasharray="6 3" pointerEvents="none" />
+          )}
+        </g>
+      )
+    }
+
     case 'freehand': {
       if (shape.points.length < 2) return null
       const pts = shape.points
