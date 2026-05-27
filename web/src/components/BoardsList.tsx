@@ -13,14 +13,17 @@ export function BoardsList({ listBoards, onCreateBoard, onOpenBoard, onDeleteBoa
   const [boards, setBoards] = useState<Board[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
       const list = await listBoards()
       setBoards(list)
     } catch (e) {
       console.error('Failed to load boards', e)
+      setError('Failed to load boards. Please try again.')
     }
     setLoading(false)
   }, [listBoards])
@@ -29,11 +32,12 @@ export function BoardsList({ listBoards, onCreateBoard, onOpenBoard, onDeleteBoa
 
   const handleCreate = async () => {
     setCreating(true)
+    setError(null)
     try {
-      const id = await onCreateBoard(`Untitled board`)
-      onOpenBoard(id)
+      await onCreateBoard('Untitled board')
     } catch (e) {
       console.error('Failed to create board', e)
+      setError('Failed to create board. Please try again.')
       setCreating(false)
     }
   }
@@ -71,6 +75,13 @@ export function BoardsList({ listBoards, onCreateBoard, onOpenBoard, onDeleteBoa
             {creating ? 'Creating...' : '+ New board'}
           </button>
         </div>
+
+        {error && (
+          <div className="mt-4 rounded-xl border border-[var(--error)] bg-[color-mix(in_srgb,var(--error)_8%,transparent)] px-4 py-3 text-sm text-[var(--error)]">
+            {error}
+            <button onClick={refresh} className="ml-2 underline">Retry</button>
+          </div>
+        )}
 
         <div className="mt-8">
           {loading ? (

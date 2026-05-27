@@ -12,11 +12,13 @@ interface ProApp {
 }
 
 let migrated = false
+let migratePromise: Promise<void> | null = null
 
 async function ensureMigrated(app: ProApp) {
   if (migrated) return
-  await app.db.migrate(MIGRATIONS)
-  migrated = true
+  if (migratePromise) return migratePromise
+  migratePromise = app.db.migrate(MIGRATIONS).then(() => { migrated = true }).finally(() => { migratePromise = null })
+  return migratePromise
 }
 
 export function useBoardPersistence(app: ProApp) {
@@ -41,7 +43,7 @@ export function useBoardPersistence(app: ProApp) {
     }
   }, [app])
 
-  const createBoard = useCallback(async (name: string): Promise<string> => {
+  const createBoard = useCallback(async (name: string): Promise<{ id: string; data: BoardData }> => {
     await ensureMigrated(app)
     const id = crypto.randomUUID()
     const now = Date.now()
@@ -50,7 +52,7 @@ export function useBoardPersistence(app: ProApp) {
       'INSERT INTO boards (id, name, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
       [id, name, JSON.stringify(data), now, now],
     )
-    return id
+    return { id, data }
   }, [app])
 
   const saveBoard = useCallback(async (id: string, shapes: Shape[], camera: Camera) => {
@@ -58,10 +60,15 @@ export function useBoardPersistence(app: ProApp) {
     const json = JSON.stringify(data)
     if (json === lastSaved.current) return
     lastSaved.current = json
-    await app.db.execute(
-      'UPDATE boards SET data = ?, updated_at = ? WHERE id = ?',
-      [json, Date.now(), id],
-    )
+    try {
+      await app.db.execute(
+        'UPDATE boards SET data = ?, updated_at = ? WHERE id = ?',
+        [json, Date.now(), id],
+      )
+    } catch (e) {
+      lastSaved.current = ''
+      throw e
+    }
   }, [app])
 
   const renameBoard = useCallback(async (id: string, name: string) => {

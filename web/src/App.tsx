@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { initPro } from '@proappstore/sdk'
 import { useProAuth } from '@proappstore/sdk/hooks'
 import { Canvas } from './components/Canvas.tsx'
@@ -20,8 +20,9 @@ export default function App() {
   const persistence = useBoardPersistence(app)
   const [view, setView] = useState<'list' | 'canvas'>('list')
   const [openBoard, setOpenBoard] = useState<OpenBoard | null>(null)
+  const openBoardRef = useRef(openBoard)
+  openBoardRef.current = openBoard
 
-  // URL hash routing: #board/<id>
   useEffect(() => {
     const hash = window.location.hash
     if (hash.startsWith('#board/') && user) {
@@ -44,8 +45,11 @@ export default function App() {
     }
   }, [persistence])
 
-  const handleCreateBoard = useCallback(async (name: string) => {
-    const id = await persistence.createBoard(name)
+  const handleCreateBoard = useCallback(async (name: string): Promise<string> => {
+    const { id, data } = await persistence.createBoard(name)
+    setOpenBoard({ id, name, data })
+    setView('canvas')
+    window.location.hash = `board/${id}`
     return id
   }, [persistence])
 
@@ -56,15 +60,17 @@ export default function App() {
   }, [])
 
   const handleSave = useCallback((shapes: Shape[], camera: Camera) => {
-    if (!openBoard) return
-    persistence.saveBoard(openBoard.id, shapes, camera)
-  }, [openBoard, persistence])
+    const board = openBoardRef.current
+    if (!board) return
+    persistence.debouncedSave(board.id, shapes, camera)
+  }, [persistence])
 
   const handleRename = useCallback(async (name: string) => {
-    if (!openBoard) return
-    await persistence.renameBoard(openBoard.id, name)
+    const board = openBoardRef.current
+    if (!board) return
+    await persistence.renameBoard(board.id, name)
     setOpenBoard(prev => prev ? { ...prev, name } : null)
-  }, [openBoard, persistence])
+  }, [persistence])
 
   const handleDeleteBoard = useCallback(async (id: string) => {
     await persistence.deleteBoard(id)

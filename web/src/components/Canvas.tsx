@@ -53,15 +53,17 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
     setCamera(initialCamera)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-save when shapes or camera change
+  const onSaveRef = useRef(onSave)
+  onSaveRef.current = onSave
+
   useEffect(() => {
     if (!board.dirty) return
     const timer = setTimeout(() => {
-      onSave(board.shapes, camera)
+      onSaveRef.current(board.shapes, cameraRef.current)
       board.clearDirty()
     }, 1500)
     return () => clearTimeout(timer)
-  }, [board.shapes, board.dirty, camera, onSave, board.clearDirty])
+  }, [board.shapes, board.dirty, board.clearDirty])
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault()
