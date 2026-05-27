@@ -10,6 +10,6 @@
     "build": "pnpm --filter @micro/web build",
     "preview": "pnpm --filter @micro/web preview",
     "typecheck": "pnpm --filter @micro/web exec tsc -b",
-    "test": "pnpm --filter @micro/web exec tsc -b"
+    "test": "pnpm --filter @micro/web test"
   }
 }
