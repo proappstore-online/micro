@@ -68,6 +68,7 @@ export function BoardsList({ listBoards, onCreateBoard, onOpenBoard, onDeleteBoa
         <div className="flex items-end justify-between">
           <h1 className="display-font text-3xl font-bold text-[var(--ink)]">Your boards</h1>
           <button
+            aria-label={creating ? 'Creating board' : 'New board'}
             onClick={handleCreate}
             disabled={creating}
             className="rounded-2xl bg-[var(--ink)] px-5 py-2.5 text-sm font-semibold text-[var(--paper)] hover:opacity-90 disabled:opacity-50"

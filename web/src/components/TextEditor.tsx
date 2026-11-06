@@ -28,6 +28,7 @@ export function TextEditor({ shape, camera, svgRect, onCommit, onCancel }: Props
 
   return (
     <textarea
+      aria-label="Shape text"
       ref={ref}
       defaultValue={shape.text}
       onBlur={e => onCommit(shape.id, e.currentTarget.value)}

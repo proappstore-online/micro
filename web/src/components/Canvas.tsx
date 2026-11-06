@@ -451,6 +451,7 @@ export function Canvas({ boardId: _boardId, boardName, initialShapes, initialCam
         </button>
         {editingName ? (
           <input
+            aria-label="Board name"
             autoFocus
             defaultValue={boardName}
             onBlur={e => { onRename(e.currentTarget.value); setEditingName(false) }}
